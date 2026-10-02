@@ -162,9 +162,9 @@ UrlParts parse_url(const string& input_url) {
     UrlParts parts;
     parts.protocol = "http";
     parts.port = 80;
-    
+
     string url = input_url;
-    
+
     if (url.rfind("http://", 0) == 0) {
         parts.protocol = "http";
         parts.port = 80;
@@ -174,7 +174,7 @@ UrlParts parse_url(const string& input_url) {
         parts.port = 443;
         url = url.substr(8);
     } else {
-        url = "http://" + url;
+        url = url;
         parts.protocol = "http";
         parts.port = 80;
     }
@@ -234,7 +234,7 @@ string fetch_url(const string& input_url) {
     string request =
         "GET " + parts.path + " HTTP/1.1\r\n" +
         "Host: " + parts.host + "\r\n" +
-        "User-Agent: SimpleCppBrowser/1.1\r\n" +
+        "User-Agent: SimpleCppBrowser/1.2\r\n" +
         "Connection: close\r\n\r\n";
 
     send(sock, request.c_str(), request.size(), 0);
@@ -312,282 +312,448 @@ string build_home_page() {
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Simple C++ Browser</title>
   <style>
+    :root {
+      --bg: #0f172a;
+      --panel: #111827;
+      --card: #1f2937;
+      --card-alt: #0b1220;
+      --accent: #3b82f6;
+      --accent-2: #60a5fa;
+      --text: #f9fafb;
+      --muted: #d1d5db;
+      --border: #374151;
+      --success: #a7f3d0;
+      --warning: #fbbf24;
+    }
+
     body {
-      font-family: Arial, sans-serif;
       margin: 0;
-      background: #111827;
-      color: #f3f4f6;
+      font-family: Arial, sans-serif;
+      background: var(--bg);
+      color: var(--text);
     }
+
     .container {
-      max-width: 1100px;
-      margin: 40px auto;
-      padding: 20px;
+      max-width: 1200px;
+      margin: 24px auto;
+      padding: 16px;
     }
-    .card {
-      background: #1f2937;
-      border-radius: 12px;
-      box-shadow: 0 10px 25px rgba(0,0,0,0.2);
-      padding: 20px;
+
+    .browser-shell {
+      background: var(--panel);
+      border: 1px solid var(--border);
+      border-radius: 14px;
+      overflow: hidden;
+      box-shadow: 0 12px 30px rgba(0,0,0,0.25);
     }
-    h1 {
-      margin-top: 0;
-      font-size: 2rem;
+
+    .tab-bar {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      background: var(--card-alt);
+      padding: 10px 12px;
+      border-bottom: 1px solid var(--border);
+      flex-wrap: wrap;
     }
+
+    .tab {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      max-width: 220px;
+      background: #1e293b;
+      border: 1px solid var(--border);
+      border-bottom: 2px solid transparent;
+      border-radius: 8px 8px 0 0;
+      padding: 8px 10px;
+      color: var(--muted);
+      cursor: pointer;
+      font-size: 0.95rem;
+      user-select: none;
+    }
+
+    .tab.active {
+      background: var(--card);
+      border-bottom-color: var(--accent);
+      color: var(--text);
+    }
+
+    .tab-close {
+      border: none;
+      background: transparent;
+      color: var(--muted);
+      cursor: pointer;
+      font-size: 1rem;
+      padding: 0 2px;
+    }
+
+    .new-tab-btn {
+      margin-left: auto;
+      background: var(--accent);
+      border: none;
+      color: white;
+      border-radius: 8px;
+      padding: 8px 14px;
+      cursor: pointer;
+      font-weight: bold;
+    }
+
     .toolbar {
       display: flex;
       gap: 10px;
-      margin-bottom: 20px;
-      flex-wrap: wrap;
+      padding: 12px;
+      background: #182132;
+      border-bottom: 1px solid var(--border);
       align-items: center;
+      flex-wrap: wrap;
     }
+
     .nav-buttons {
       display: flex;
       gap: 8px;
     }
+
     button {
-      background: #3b82f6;
+      background: var(--accent);
       color: white;
       border: none;
       border-radius: 8px;
-      padding: 12px 18px;
+      padding: 10px 14px;
       cursor: pointer;
-      font-size: 1rem;
+      font-size: 0.95rem;
     }
+
     button:hover {
       background: #2563eb;
     }
+
     button:disabled {
       background: #6b7280;
       cursor: not-allowed;
-      opacity: 0.6;
+      opacity: 0.7;
     }
+
     input {
       flex: 1;
       min-width: 220px;
-      padding: 12px 14px;
+      background: var(--card-alt);
+      color: var(--text);
+      border: 1px solid var(--border);
       border-radius: 8px;
-      border: 1px solid #374151;
-      background: #0f172a;
-      color: #f9fafb;
+      padding: 10px 12px;
       font-size: 1rem;
     }
+
+    .content {
+      padding: 18px;
+      min-height: 600px;
+      background: var(--card);
+    }
+
+    .status {
+      color: var(--success);
+      font-weight: bold;
+      margin-bottom: 14px;
+    }
+
     .meta {
       margin-bottom: 16px;
     }
+
     .meta h2 {
-      font-size: 1.3rem;
-      margin-bottom: 8px;
+      margin: 0 0 8px;
+      font-size: 1.4rem;
     }
+
     .summary {
       background: rgba(255,255,255,0.03);
-      border: 1px solid #374151;
+      border: 1px solid var(--border);
       border-radius: 8px;
-      padding: 16px;
-      line-height: 1.6;
+      padding: 14px;
       white-space: pre-wrap;
+      line-height: 1.6;
       margin-bottom: 18px;
+      min-height: 80px;
     }
+
     .links {
       list-style: none;
       padding: 0;
       margin: 0;
     }
+
     .links li {
       margin-bottom: 8px;
       word-break: break-word;
     }
+
     .links a {
-      color: #93c5fd;
+      color: var(--accent-2);
       text-decoration: none;
-    }
-    .status {
-      color: #a7f3d0;
-      font-weight: bold;
-      margin-bottom: 12px;
-    }
-    @media (max-width: 700px) {
-      .toolbar {
-        flex-direction: column;
-      }
-      button, input {
-        width: 100%;
-      }
-      .nav-buttons {
-        width: 100%;
-      }
     }
   </style>
 </head>
 <body>
   <div class="container">
-    <div class="card">
-      <h1>Simple C++ Browser</h1>
+    <div class="browser-shell">
+      <div id="tabs" class="tab-bar"></div>
       <div class="toolbar">
         <div class="nav-buttons">
-          <button id="backBtn" onclick="goBack()">← Back</button>
-          <button id="forwardBtn" onclick="goForward()">Forward →</button>
+          <button id="backBtn" type="button">← Back</button>
+          <button id="forwardBtn" type="button">Forward →</button>
         </div>
         <input id="urlInput" type="text" value="http://example.com" placeholder="Enter an address" />
-        <button id="fetchButton" onclick="fetchPage()">Browse</button>
+        <button id="fetchButton" type="button">Browse</button>
+        <button id="newTabButton" class="new-tab-btn" type="button">+ New Tab</button>
       </div>
-
-      <div id="status" class="status">Ready</div>
-      <div class="meta">
-        <h2 id="pageTitle">Page title</h2>
+      <div class="content">
+        <div id="status" class="status">Ready</div>
+        <div class="meta">
+          <h2 id="pageTitle">Page title</h2>
+        </div>
+        <div id="summary" class="summary">Loading page...</div>
+        <h3>Links</h3>
+        <ul id="links" class="links"></ul>
       </div>
-      <div id="summary" class="summary">Loading page...</div>
-      <h3>Links</h3>
-      <ul id="links" class="links"></ul>
     </div>
   </div>
 
   <script>
-    let canGoBack = false;
-    let canGoForward = false;
+    let tabs = [{
+      id: 1,
+      title: 'Page title',
+      url: 'http://example.com',
+      history: ['http://example.com'],
+      historyIndex: 0,
+      summary: 'Loading page...',
+      links: []
+    }];
 
-    async function fetchPage() {
-      const input = document.getElementById('urlInput');
-      const status = document.getElementById('status');
-      const title = document.getElementById('pageTitle');
-      const summary = document.getElementById('summary');
-      const linksList = document.getElementById('links');
-      const url = input.value.trim();
+    let activeTabId = 1;
+    let tabCounter = 1;
 
-      if (!url) {
-        status.textContent = 'Please enter a URL';
+    function getActiveTab() {
+      return tabs.find(tab => tab.id === activeTabId) || tabs[0];
+    }
+
+    function saveTabState(tab, title, summary, links) {
+      tab.title = title || 'Untitled page';
+      tab.summary = summary || 'No readable content found.';
+      tab.links = Array.isArray(links) ? links : [];
+      renderTabDisplay();
+      renderPageContent();
+    }
+
+    function renderTabs() {
+      const tabsEl = document.getElementById('tabs');
+      tabsEl.innerHTML = '';
+
+      tabs.forEach(tab => {
+        const button = document.createElement('div');
+        button.className = 'tab' + (tab.id === activeTabId ? ' active' : '');
+        button.dataset.id = String(tab.id);
+
+        const label = document.createElement('span');
+        label.textContent = tab.title || 'New tab';
+        label.style.maxWidth = '140px';
+        label.style.overflow = 'hidden';
+        label.style.textOverflow = 'ellipsis';
+        label.style.whiteSpace = 'nowrap';
+
+        const closeBtn = document.createElement('button');
+        closeBtn.textContent = '×';
+        closeBtn.className = 'tab-close';
+        closeBtn.type = 'button';
+        closeBtn.title = 'Close tab';
+        closeBtn.addEventListener('click', (event) => {
+          event.stopPropagation();
+          closeTab(tab.id);
+        });
+
+        button.appendChild(label);
+        button.appendChild(closeBtn);
+        button.addEventListener('click', () => {
+          setActiveTab(tab.id);
+        });
+
+        tabsEl.appendChild(button);
+      });
+    }
+
+    function renderPageContent() {
+      const tab = getActiveTab();
+      const titleEl = document.getElementById('pageTitle');
+      const summaryEl = document.getElementById('summary');
+      const linksEl = document.getElementById('links');
+      const statusEl = document.getElementById('status');
+      const urlEl = document.getElementById('urlInput');
+
+      titleEl.textContent = tab.title || 'Page title';
+      summaryEl.textContent = tab.summary || 'No readable content found.';
+      urlEl.value = tab.url || '';
+
+      linksEl.innerHTML = '';
+      if (Array.isArray(tab.links) && tab.links.length > 0) {
+        tab.links.forEach(link => {
+          const li = document.createElement('li');
+          const a = document.createElement('a');
+          a.href = link;
+          a.target = '_blank';
+          a.rel = 'noopener noreferrer';
+          a.textContent = link;
+          li.appendChild(a);
+          linksEl.appendChild(li);
+        });
+      } else {
+        const li = document.createElement('li');
+        li.textContent = 'No links were found.';
+        linksEl.appendChild(li);
+      }
+
+      statusEl.textContent = 'Ready';
+      updateNavButtons();
+    }
+
+    function renderTabDisplay() {
+      renderTabs();
+      renderPageContent();
+    }
+
+    function setActiveTab(id) {
+      const found = tabs.find(tab => tab.id === id);
+      if (!found) return;
+      activeTabId = id;
+      renderTabDisplay();
+    }
+
+    function createTab(url = 'https://example.com') {
+      tabCounter += 1;
+      const newTab = {
+        id: tabCounter,
+        title: 'Page title',
+        url: url,
+        history: [url],
+        historyIndex: 0,
+        summary: 'Loading page...',
+        links: []
+      };
+      tabs.push(newTab);
+      activeTabId = newTab.id;
+      renderTabDisplay();
+      return newTab;
+    }
+
+    function closeTab(id) {
+      if (tabs.length === 1) {
         return;
       }
+      const index = tabs.findIndex(tab => tab.id === id);
+      if (index === -1) return;
+      tabs.splice(index, 1);
 
-      status.textContent = 'Loading...';
-      summary.textContent = 'Fetching page...';
-      title.textContent = 'Page title';
-      linksList.innerHTML = '';
-
-      try {
-        const res = await fetch('/fetch?url=' + encodeURIComponent(url));
-        const data = await res.json();
-
-        title.textContent = data.title || 'Untitled page';
-        summary.textContent = data.summary || 'No readable content found.';
-
-        if (Array.isArray(data.links) && data.links.length > 0) {
-          data.links.forEach(link => {
-            const li = document.createElement('li');
-            const a = document.createElement('a');
-            a.href = link;
-            a.target = '_blank';
-            a.rel = 'noopener noreferrer';
-            a.textContent = link;
-            li.appendChild(a);
-            linksList.appendChild(li);
-          });
-        } else {
-          const li = document.createElement('li');
-          li.textContent = 'No links were found.';
-          linksList.appendChild(li);
-        }
-
-        status.textContent = 'Page loaded successfully';
-        updateNavigationButtons();
-      } catch (error) {
-        title.textContent = 'Error';
-        summary.textContent = 'Could not load the page. Check the URL and try again.';
-        status.textContent = 'Request failed';
-        console.error(error);
+      if (activeTabId === id) {
+        activeTabId = tabs[Math.max(0, index - 1)].id;
       }
+      renderTabDisplay();
     }
 
-    async function goBack() {
-      try {
-        const res = await fetch('/history/back');
-        const data = await res.json();
-        if (data.url) {
-          document.getElementById('urlInput').value = data.url;
-          await loadPageContent(data.url);
-          updateNavigationButtons();
-        }
-      } catch (error) {
-        console.error(error);
-      }
+    function updateNavButtons() {
+      const tab = getActiveTab();
+      const backBtn = document.getElementById('backBtn');
+      const forwardBtn = document.getElementById('forwardBtn');
+
+      backBtn.disabled = tab.historyIndex <= 0;
+      forwardBtn.disabled = tab.historyIndex >= tab.history.length - 1;
     }
 
-    async function goForward() {
-      try {
-        const res = await fetch('/history/forward');
-        const data = await res.json();
-        if (data.url) {
-          document.getElementById('urlInput').value = data.url;
-          await loadPageContent(data.url);
-          updateNavigationButtons();
-        }
-      } catch (error) {
-        console.error(error);
+    function pushHistory(url) {
+      const tab = getActiveTab();
+      if (!tab) return;
+
+      const current = tab.history[tab.historyIndex];
+      if (current !== url) {
+        tab.history = tab.history.slice(0, tab.historyIndex + 1);
+        tab.history.push(url);
+        tab.historyIndex = tab.history.length - 1;
       }
+      updateNavButtons();
     }
 
-    async function loadPageContent(url) {
-      const status = document.getElementById('status');
-      const title = document.getElementById('pageTitle');
-      const summary = document.getElementById('summary');
-      const linksList = document.getElementById('links');
+    function navigateTo(url, { pushToHistory = true } = {}) {
+      const tab = getActiveTab();
+      if (!tab) return;
 
-      status.textContent = 'Loading...';
-      summary.textContent = 'Fetching page...';
-      title.textContent = 'Page title';
-      linksList.innerHTML = '';
+      tab.url = url;
+      const statusEl = document.getElementById('status');
+      const summaryEl = document.getElementById('summary');
+      const titleEl = document.getElementById('pageTitle');
+      const linksEl = document.getElementById('links');
 
-      try {
-        const res = await fetch('/fetch?url=' + encodeURIComponent(url));
-        const data = await res.json();
+      statusEl.textContent = 'Loading...';
+      summaryEl.textContent = 'Fetching page...';
+      titleEl.textContent = 'Page title';
+      linksEl.innerHTML = '';
 
-        title.textContent = data.title || 'Untitled page';
-        summary.textContent = data.summary || 'No readable content found.';
-
-        if (Array.isArray(data.links) && data.links.length > 0) {
-          data.links.forEach(link => {
-            const li = document.createElement('li');
-            const a = document.createElement('a');
-            a.href = link;
-            a.target = '_blank';
-            a.rel = 'noopener noreferrer';
-            a.textContent = link;
-            li.appendChild(a);
-            linksList.appendChild(li);
-          });
-        } else {
-          const li = document.createElement('li');
-          li.textContent = 'No links were found.';
-          linksList.appendChild(li);
-        }
-
-        status.textContent = 'Page loaded successfully';
-      } catch (error) {
-        title.textContent = 'Error';
-        summary.textContent = 'Could not load the page. Check the URL and try again.';
-        status.textContent = 'Request failed';
-        console.error(error);
-      }
+      fetch('/fetch?url=' + encodeURIComponent(url))
+        .then(res => res.json())
+        .then(data => {
+          if (pushToHistory) {
+            pushHistory(url);
+          }
+          tab.title = data.title || 'Untitled page';
+          tab.summary = data.summary || 'No readable content found.';
+          tab.links = data.links || [];
+          renderTabDisplay();
+        })
+        .catch(err => {
+          statusEl.textContent = 'Request failed';
+          summaryEl.textContent = 'Could not load page. Please check the URL and try again.';
+          console.error(err);
+        });
     }
 
-    async function updateNavigationButtons() {
-      try {
-        const res = await fetch('/history/status');
-        const data = await res.json();
-        document.getElementById('backBtn').disabled = !data.canGoBack;
-        document.getElementById('forwardBtn').disabled = !data.canGoForward;
-      } catch (error) {
-        console.error(error);
-      }
+    function goBack() {
+      const tab = getActiveTab();
+      if (!tab || tab.historyIndex <= 0) return;
+      tab.historyIndex -= 1;
+      const prevUrl = tab.history[tab.historyIndex];
+      tab.url = prevUrl;
+      navigateTo(prevUrl, { pushToHistory: false });
     }
 
-    document.getElementById('fetchButton').addEventListener('click', fetchPage);
+    function goForward() {
+      const tab = getActiveTab();
+      if (!tab || tab.historyIndex >= tab.history.length - 1) return;
+      tab.historyIndex += 1;
+      const nextUrl = tab.history[tab.historyIndex];
+      tab.url = nextUrl;
+      navigateTo(nextUrl, { pushToHistory: false });
+    }
+
+    document.getElementById('fetchButton').addEventListener('click', () => {
+      const url = document.getElementById('urlInput').value.trim();
+      if (!url) return;
+      navigateTo(url, { pushToHistory: true });
+    });
+
     document.getElementById('urlInput').addEventListener('keydown', (event) => {
       if (event.key === 'Enter') {
-        fetchPage();
+        const url = document.getElementById('urlInput').value.trim();
+        if (!url) return;
+        navigateTo(url, { pushToHistory: true });
       }
     });
 
-    updateNavigationButtons();
+    document.getElementById('backBtn').addEventListener('click', goBack);
+    document.getElementById('forwardBtn').addEventListener('click', goForward);
+    document.getElementById('newTabButton').addEventListener('click', () => {
+      createTab('https://example.com');
+      navigateTo('https://example.com', { pushToHistory: true });
+    });
+
+    renderTabDisplay();
+    navigateTo('http://example.com', { pushToHistory: true });
   </script>
 </body>
 </html>
