@@ -8,6 +8,7 @@
 #include <cstring>
 #include <cctype>
 #include <mutex>
+#include <map>
 #include <sys/socket.h>
 #include <netdb.h>
 #include <unistd.h>
@@ -17,6 +18,87 @@
 #include <openssl/x509v3.h>
 
 using namespace std;
+
+map<string, map<string, string>> translations = {
+    {"en", {
+        {"title", "Simple C++ Browser"},
+        {"ready", "Ready"},
+        {"loading", "Loading..."},
+        {"fetching", "Fetching page..."},
+        {"back", "Back"},
+        {"forward", "Forward"},
+        {"browse", "Browse"},
+        {"new_tab", "New Tab"},
+        {"links", "Links"},
+        {"summary", "Summary"},
+        {"no_links", "No links found"},
+        {"security_ok", "Secure browsing session"},
+        {"security_warn", "Security warning: blocked risky content"},
+        {"security_bad", "Security blocked: unsafe URL"},
+        {"untitled", "Untitled page"},
+        {"no_content", "No readable content found"},
+        {"error_url_blocked", "URL blocked by security policy"},
+        {"error_no_host", "Missing host"},
+        {"error_socket", "Socket creation failed"},
+        {"error_connection", "Connection failed"},
+        {"error_ssl", "SSL connection failed"}
+    }},
+    {"es", {
+        {"title", "Navegador Simple C++"},
+        {"ready", "Listo"},
+        {"loading", "Cargando..."},
+        {"fetching", "Obteniendo página..."},
+        {"back", "Atrás"},
+        {"forward", "Adelante"},
+        {"browse", "Navegar"},
+        {"new_tab", "Nueva pestaña"},
+        {"links", "Enlaces"},
+        {"summary", "Resumen"},
+        {"no_links", "No se encontraron enlaces"},
+        {"security_ok", "Sesión de navegación segura"},
+        {"security_warn", "Advertencia de seguridad: contenido riesgoso bloqueado"},
+        {"security_bad", "Seguridad bloqueada: URL insegura"},
+        {"untitled", "Página sin título"},
+        {"no_content", "No hay contenido legible"},
+        {"error_url_blocked", "URL bloqueada por política de seguridad"},
+        {"error_no_host", "Host faltante"},
+        {"error_socket", "Error al crear socket"},
+        {"error_connection", "Conexión fallida"},
+        {"error_ssl", "Error de conexión SSL"}
+    }},
+    {"fr", {
+        {"title", "Navigateur Simple C++"},
+        {"ready", "Prêt"},
+        {"loading", "Chargement..."},
+        {"fetching", "Récupération de la page..."},
+        {"back", "Retour"},
+        {"forward", "Avant"},
+        {"browse", "Parcourir"},
+        {"new_tab", "Nouvel onglet"},
+        {"links", "Liens"},
+        {"summary", "Résumé"},
+        {"no_links", "Aucun lien trouvé"},
+        {"security_ok", "Session de navigation sécurisée"},
+        {"security_warn", "Avertissement de sécurité: contenu risqué bloqué"},
+        {"security_bad", "Sécurité bloquée: URL non sécurisée"},
+        {"untitled", "Page sans titre"},
+        {"no_content", "Aucun contenu lisible trouvé"},
+        {"error_url_blocked", "URL bloquée par la politique de sécurité"},
+        {"error_no_host", "Hôte manquant"},
+        {"error_socket", "Échec de la création du socket"},
+        {"error_connection", "Connexion échouée"},
+        {"error_ssl", "Erreur de connexion SSL"}
+    }}
+};
+
+string g_currentLanguage = "en";
+
+string t(const string& key) {
+    if (translations[g_currentLanguage].count(key)) {
+        return translations[g_currentLanguage][key];
+    }
+    return translations["en"][key];
+}
 
 struct UrlParts {
     string protocol;
@@ -90,7 +172,7 @@ string extract_title(const string& html) {
         title = regex_replace(title, regex("\\s+"), " ");
         return trim(title);
     }
-    return "Untitled page";
+    return t("untitled");
 }
 
 string strip_tags(const string& html) {
@@ -223,76 +305,14 @@ string http_response_body(const string& response) {
     return response.substr(pos + 4);
 }
 
-string get_https_certificate_summary(const string& host) {
-    SSL_CTX* ctx = SSL_CTX_new(TLS_client_method());
-    if (!ctx) return "Certificate verification unavailable";
-
-    SSL* ssl = SSL_new(ctx);
-    if (!ssl) {
-        SSL_CTX_free(ctx);
-        return "Certificate verification unavailable";
-    }
-
-    int sock = socket(AF_INET, SOCK_STREAM, 0);
-    if (sock < 0) {
-        SSL_free(ssl);
-        SSL_CTX_free(ctx);
-        return "Certificate verification unavailable";
-    }
-
-    addrinfo hints{};
-    hints.ai_family = AF_INET;
-    hints.ai_socktype = SOCK_STREAM;
-    string port = "443";
-
-    addrinfo* res = nullptr;
-    int status = getaddrinfo(host.c_str(), port.c_str(), &hints, &res);
-    if (status != 0) {
-        close(sock);
-        SSL_free(ssl);
-        SSL_CTX_free(ctx);
-        return "Certificate verification unavailable";
-    }
-
-    if (connect(sock, res->ai_addr, res->ai_addrlen) != 0) {
-        freeaddrinfo(res);
-        close(sock);
-        SSL_free(ssl);
-        SSL_CTX_free(ctx);
-        return "Certificate verification unavailable";
-    }
-    freeaddrinfo(res);
-
-    SSL_set_fd(ssl, sock);
-    if (SSL_connect(ssl) <= 0) {
-        close(sock);
-        SSL_free(ssl);
-        SSL_CTX_free(ctx);
-        return "Certificate verification unavailable";
-    }
-
-    X509* cert = SSL_get_peer_certificate(ssl);
-    string result = "Certificate verification available";
-    if (cert) {
-        result = "Certificate verified for host " + host;
-        X509_free(cert);
-    }
-
-    SSL_shutdown(ssl);
-    SSL_free(ssl);
-    SSL_CTX_free(ctx);
-    close(sock);
-    return result;
-}
-
 string fetch_url(const string& input_url) {
     if (!is_valid_url(input_url)) {
-        return "<error>URL blocked by security policy</error>";
+        return "<error>" + t("error_url_blocked") + "</error>";
     }
 
     UrlParts parts = parse_url(trim(input_url));
     if (parts.host.empty()) {
-        return "<error>Missing host</error>";
+        return "<error>" + t("error_no_host") + "</error>";
     }
 
     addrinfo hints{};
@@ -309,19 +329,19 @@ string fetch_url(const string& input_url) {
     int sock = socket(res->ai_family, res->ai_socktype, res->ai_protocol);
     if (sock == -1) {
         freeaddrinfo(res);
-        return "<error>Socket creation failed</error>";
+        return "<error>" + t("error_socket") + "</error>";
     }
 
     if (connect(sock, res->ai_addr, res->ai_addrlen) != 0) {
         close(sock);
         freeaddrinfo(res);
-        return "<error>Connection failed</error>";
+        return "<error>" + t("error_connection") + "</error>";
     }
 
     string request =
         "GET " + parts.path + " HTTP/1.1\r\n" +
         "Host: " + parts.host + "\r\n" +
-        "User-Agent: SimpleCppBrowser/1.4\r\n" +
+        "User-Agent: SimpleCppBrowser/2.0\r\n" +
         "Accept: text/html,application/xhtml+xml,*/*\r\n" +
         "Connection: close\r\n\r\n";
 
@@ -352,7 +372,7 @@ string fetch_url(const string& input_url) {
             SSL_CTX_free(ctx);
             close(sock);
             freeaddrinfo(res);
-            return "<error>SSL connection failed</error>";
+            return "<error>" + t("error_ssl") + "</error>";
         }
 
         if (SSL_write(ssl, request.c_str(), static_cast<int>(request.size())) <= 0) {
@@ -391,45 +411,6 @@ string fetch_url(const string& input_url) {
     return http_response_body(response);
 }
 
-class BrowserHistory {
-public:
-    void push(const string& url) {
-        history.push_back(url);
-        current_index = history.size() - 1;
-    }
-
-    bool can_go_back() const {
-        return current_index > 0;
-    }
-
-    bool can_go_forward() const {
-        return current_index < static_cast<int>(history.size()) - 1;
-    }
-
-    string go_back() {
-        if (can_go_back()) {
-            --current_index;
-            return history[current_index];
-        }
-        return "";
-    }
-
-    string go_forward() {
-        if (can_go_forward()) {
-            ++current_index;
-            return history[current_index];
-        }
-        return "";
-    }
-
-private:
-    vector<string> history;
-    int current_index = -1;
-};
-
-BrowserHistory g_history;
-mutex g_history_mutex;
-
 string build_home_page() {
     return R"HTML(
 <!DOCTYPE html>
@@ -458,7 +439,7 @@ string build_home_page() {
 
     body {
       margin: 0;
-      font-family: Arial, sans-serif;
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
       background: var(--bg);
       color: var(--text);
     }
@@ -477,56 +458,38 @@ string build_home_page() {
       box-shadow: 0 12px 30px rgba(0,0,0,0.25);
     }
 
-    .tab-bar {
+    .header {
       display: flex;
+      justify-content: space-between;
       align-items: center;
-      gap: 8px;
-      background: var(--card-alt);
-      padding: 10px 12px;
+      padding: 12px 16px;
+      background: #0d1117;
       border-bottom: 1px solid var(--border);
-      flex-wrap: wrap;
     }
 
-    .tab {
-      display: inline-flex;
-      align-items: center;
-      gap: 8px;
-      max-width: 220px;
-      background: #1e293b;
-      border: 1px solid var(--border);
-      border-bottom: 2px solid transparent;
-      border-radius: 8px 8px 0 0;
-      padding: 8px 10px;
-      color: var(--muted);
-      cursor: pointer;
-      font-size: 0.95rem;
-      user-select: none;
-    }
-
-    .tab.active {
-      background: var(--card);
-      border-bottom-color: var(--accent);
-      color: var(--text);
-    }
-
-    .tab-close {
-      border: none;
-      background: transparent;
-      color: var(--muted);
-      cursor: pointer;
-      font-size: 1rem;
-      padding: 0 2px;
-    }
-
-    .new-tab-btn {
-      margin-left: auto;
-      background: var(--accent);
-      border: none;
-      color: white;
-      border-radius: 8px;
-      padding: 8px 14px;
-      cursor: pointer;
+    .header-title {
+      font-size: 18px;
       font-weight: bold;
+    }
+
+    .lang-selector {
+      display: flex;
+      gap: 8px;
+    }
+
+    .lang-btn {
+      padding: 6px 12px;
+      background: var(--card-alt);
+      color: var(--text);
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      cursor: pointer;
+      font-size: 12px;
+    }
+
+    .lang-btn.active {
+      background: var(--accent);
+      border-color: var(--accent);
     }
 
     .toolbar {
@@ -552,6 +515,7 @@ string build_home_page() {
       padding: 10px 14px;
       cursor: pointer;
       font-size: 0.95rem;
+      font-weight: 500;
     }
 
     button:hover { background: #2563eb; }
@@ -572,6 +536,10 @@ string build_home_page() {
       font-size: 1rem;
     }
 
+    input::placeholder {
+      color: var(--muted);
+    }
+
     .main-view {
       display: grid;
       grid-template-columns: 420px 1fr;
@@ -587,16 +555,28 @@ string build_home_page() {
       border-radius: 10px;
       padding: 14px;
       min-height: 290px;
+      overflow-y: auto;
     }
 
     .status {
       font-weight: bold;
       margin-bottom: 14px;
+      padding: 8px 12px;
+      border-radius: 6px;
     }
 
-    .status.ok { color: var(--success); }
-    .status.warn { color: var(--warning); }
-    .status.bad { color: var(--danger); }
+    .status.ok { 
+      color: var(--success);
+      background: rgba(167, 243, 208, 0.1);
+    }
+    .status.warn { 
+      color: var(--warning);
+      background: rgba(251, 191, 36, 0.1);
+    }
+    .status.bad { 
+      color: var(--danger);
+      background: rgba(248, 113, 113, 0.1);
+    }
 
     .meta h2 {
       margin: 0 0 8px;
@@ -612,6 +592,8 @@ string build_home_page() {
       line-height: 1.6;
       margin-bottom: 18px;
       min-height: 120px;
+      max-height: 200px;
+      overflow-y: auto;
     }
 
     .links {
@@ -628,6 +610,11 @@ string build_home_page() {
     .links a {
       color: var(--accent-2);
       text-decoration: none;
+      font-size: 0.9rem;
+    }
+
+    .links a:hover {
+      text-decoration: underline;
     }
 
     .render-panel {
@@ -647,6 +634,11 @@ string build_home_page() {
       background: white;
     }
 
+    h3 {
+      margin: 12px 0 8px 0;
+      font-size: 1rem;
+    }
+
     @media (max-width: 1000px) {
       .main-view {
         grid-template-columns: 1fr;
@@ -657,7 +649,15 @@ string build_home_page() {
 <body>
   <div class="container">
     <div class="browser-shell">
-      <div id="tabs" class="tab-bar"></div>
+      <div class="header">
+        <div class="header-title">Simple C++ Browser</div>
+        <div class="lang-selector">
+          <button class="lang-btn active" data-lang="en" onclick="changeLanguage('en')">EN</button>
+          <button class="lang-btn" data-lang="es" onclick="changeLanguage('es')">ES</button>
+          <button class="lang-btn" data-lang="fr" onclick="changeLanguage('fr')">FR</button>
+        </div>
+      </div>
+
       <div class="toolbar">
         <div class="nav-buttons">
           <button id="backBtn" type="button">← Back</button>
@@ -665,7 +665,6 @@ string build_home_page() {
         </div>
         <input id="urlInput" type="text" value="https://example.com" placeholder="Enter an address" />
         <button id="fetchButton" type="button">Browse</button>
-        <button id="newTabButton" class="new-tab-btn" type="button">+ New Tab</button>
       </div>
 
       <div class="main-view">
@@ -687,59 +686,95 @@ string build_home_page() {
   </div>
 
   <script>
+    let currentLanguage = 'en';
+    
+    const translations = {
+      en: {
+        ready: 'Ready',
+        loading: 'Loading...',
+        fetching: 'Fetching page...',
+        back: 'Back',
+        forward: 'Forward',
+        browse: 'Browse',
+        links: 'Links',
+        no_links: 'No links found',
+        security_ok: 'Secure browsing session',
+        security_warn: 'Security warning: blocked risky content',
+        security_bad: 'Security blocked: unsafe URL',
+        untitled: 'Untitled page',
+        no_content: 'No readable content found',
+        request_failed: 'Request failed'
+      },
+      es: {
+        ready: 'Listo',
+        loading: 'Cargando...',
+        fetching: 'Obteniendo página...',
+        back: 'Atrás',
+        forward: 'Adelante',
+        browse: 'Navegar',
+        links: 'Enlaces',
+        no_links: 'No se encontraron enlaces',
+        security_ok: 'Sesión de navegación segura',
+        security_warn: 'Advertencia de seguridad: contenido riesgoso bloqueado',
+        security_bad: 'Seguridad bloqueada: URL insegura',
+        untitled: 'Página sin título',
+        no_content: 'No hay contenido legible',
+        request_failed: 'Error en la solicitud'
+      },
+      fr: {
+        ready: 'Prêt',
+        loading: 'Chargement...',
+        fetching: 'Récupération de la page...',
+        back: 'Retour',
+        forward: 'Avant',
+        browse: 'Parcourir',
+        links: 'Liens',
+        no_links: 'Aucun lien trouvé',
+        security_ok: 'Session de navigation sécurisée',
+        security_warn: 'Avertissement de sécurité: contenu risqué bloqué',
+        security_bad: 'Sécurité bloquée: URL non sécurisée',
+        untitled: 'Page sans titre',
+        no_content: 'Aucun contenu lisible trouvé',
+        request_failed: 'Erreur de requête'
+      }
+    };
+
+    function t(key) {
+      return translations[currentLanguage][key] || translations['en'][key];
+    }
+
+    function changeLanguage(lang) {
+      currentLanguage = lang;
+      document.querySelectorAll('.lang-btn').forEach(btn => {
+        btn.classList.toggle('active', btn.dataset.lang === lang);
+      });
+      updateUI();
+    }
+
+    function updateUI() {
+      document.getElementById('backBtn').textContent = '← ' + t('back');
+      document.getElementById('forwardBtn').textContent = t('forward') + ' →';
+      document.getElementById('fetchButton').textContent = t('browse');
+      const linkHeader = document.querySelector('.main-view .panel h3');
+      if (linkHeader) linkHeader.textContent = t('links');
+    }
+
     let tabs = [{
       id: 1,
-      title: 'Page title',
+      title: t('untitled'),
       url: 'https://example.com',
       history: ['https://example.com'],
       historyIndex: 0,
-      summary: 'Loading page...',
+      summary: t('loading'),
       links: [],
       html: '<html><body><p>Loading...</p></body></html>',
       securityStatus: 'ok'
     }];
 
     let activeTabId = 1;
-    let tabCounter = 1;
 
     function getActiveTab() {
       return tabs.find(tab => tab.id === activeTabId) || tabs[0];
-    }
-
-    function renderTabs() {
-      const tabsEl = document.getElementById('tabs');
-      tabsEl.innerHTML = '';
-
-      tabs.forEach(tab => {
-        const button = document.createElement('div');
-        button.className = 'tab' + (tab.id === activeTabId ? ' active' : '');
-        button.dataset.id = String(tab.id);
-
-        const label = document.createElement('span');
-        label.textContent = tab.title || 'New tab';
-        label.style.maxWidth = '140px';
-        label.style.overflow = 'hidden';
-        label.style.textOverflow = 'ellipsis';
-        label.style.whiteSpace = 'nowrap';
-
-        const closeBtn = document.createElement('button');
-        closeBtn.textContent = '×';
-        closeBtn.className = 'tab-close';
-        closeBtn.type = 'button';
-        closeBtn.title = 'Close tab';
-        closeBtn.addEventListener('click', (event) => {
-          event.stopPropagation();
-          closeTab(tab.id);
-        });
-
-        button.appendChild(label);
-        button.appendChild(closeBtn);
-        button.addEventListener('click', () => {
-          setActiveTab(tab.id);
-        });
-
-        tabsEl.appendChild(button);
-      });
     }
 
     function renderPageContent() {
@@ -751,17 +786,17 @@ string build_home_page() {
       const frameEl = document.getElementById('pageFrame');
       const statusEl = document.getElementById('status');
 
-      titleEl.textContent = tab.title || 'Page title';
-      summaryEl.textContent = tab.summary || 'No readable content found.';
+      titleEl.textContent = tab.title || t('untitled');
+      summaryEl.textContent = tab.summary || t('no_content');
       urlEl.value = tab.url || '';
       frameEl.srcdoc = tab.html || '<html><body><p>Render preview unavailable.</p></body></html>';
 
       statusEl.className = 'status ' + (tab.securityStatus || 'ok');
       statusEl.textContent = tab.securityStatus === 'warn'
-        ? 'Security warning: blocked risky content'
+        ? t('security_warn')
         : tab.securityStatus === 'bad'
-          ? 'Security blocked: unsafe URL'
-          : 'Secure browsing session';
+          ? t('security_bad')
+          : t('security_ok');
 
       linksEl.innerHTML = '';
       if (Array.isArray(tab.links) && tab.links.length > 0) {
@@ -777,85 +812,26 @@ string build_home_page() {
         });
       } else {
         const li = document.createElement('li');
-        li.textContent = 'No links were found.';
+        li.textContent = t('no_links');
         linksEl.appendChild(li);
       }
 
       updateNavButtons();
     }
 
-    function renderTabDisplay() {
-      renderTabs();
-      renderPageContent();
-    }
-
-    function setActiveTab(id) {
-      const found = tabs.find(tab => tab.id === id);
-      if (!found) return;
-      activeTabId = id;
-      renderTabDisplay();
-    }
-
-    function createTab(url = 'https://example.com') {
-      tabCounter += 1;
-      const newTab = {
-        id: tabCounter,
-        title: 'Page title',
-        url: url,
-        history: [url],
-        historyIndex: 0,
-        summary: 'Loading page...',
-        links: [],
-        html: '<html><body><p>Loading...</p></body></html>',
-        securityStatus: 'ok'
-      };
-      tabs.push(newTab);
-      activeTabId = newTab.id;
-      renderTabDisplay();
-      return newTab;
-    }
-
-    function closeTab(id) {
-      if (tabs.length === 1) return;
-      const index = tabs.findIndex(tab => tab.id === id);
-      if (index === -1) return;
-      tabs.splice(index, 1);
-
-      if (activeTabId === id) {
-        activeTabId = tabs[Math.max(0, index - 1)].id;
-      }
-      renderTabDisplay();
-    }
-
     function updateNavButtons() {
       const tab = getActiveTab();
-      const backBtn = document.getElementById('backBtn');
-      const forwardBtn = document.getElementById('forwardBtn');
-
-      backBtn.disabled = tab.historyIndex <= 0;
-      forwardBtn.disabled = tab.historyIndex >= tab.history.length - 1;
+      document.getElementById('backBtn').disabled = tab.historyIndex <= 0;
+      document.getElementById('forwardBtn').disabled = tab.historyIndex >= tab.history.length - 1;
     }
 
-    function pushHistory(url) {
-      const tab = getActiveTab();
-      if (!tab) return;
-
-      const current = tab.history[tab.historyIndex];
-      if (current !== url) {
-        tab.history = tab.history.slice(0, tab.historyIndex + 1);
-        tab.history.push(url);
-        tab.historyIndex = tab.history.length - 1;
-      }
-      updateNavButtons();
-    }
-
-    function navigateTo(url, { pushToHistory = true } = {}) {
+    function navigateTo(url, pushToHistory = true) {
       const tab = getActiveTab();
       if (!tab) return;
 
       if (!/^https?:\/\//i.test(url)) {
         tab.securityStatus = 'bad';
-        renderTabDisplay();
+        renderPageContent();
         return;
       }
 
@@ -863,26 +839,24 @@ string build_home_page() {
       tab.securityStatus = 'ok';
       const statusEl = document.getElementById('status');
       const summaryEl = document.getElementById('summary');
-      const titleEl = document.getElementById('pageTitle');
-      const linksEl = document.getElementById('links');
       const frameEl = document.getElementById('pageFrame');
 
-      statusEl.textContent = 'Loading...';
+      statusEl.textContent = t('loading');
       statusEl.className = 'status warn';
-      summaryEl.textContent = 'Fetching page...';
-      titleEl.textContent = 'Page title';
-      linksEl.innerHTML = '';
-      frameEl.srcdoc = '<html><body><p>Loading page...</p></body></html>';
+      summaryEl.textContent = t('fetching');
+      frameEl.srcdoc = '<html><body><p>' + t('loading') + '</p></body></html>';
 
       fetch('/fetch?url=' + encodeURIComponent(url))
         .then(res => res.json())
         .then(data => {
           if (pushToHistory) {
-            pushHistory(url);
+            tab.history = tab.history.slice(0, tab.historyIndex + 1);
+            tab.history.push(url);
+            tab.historyIndex = tab.history.length - 1;
           }
 
-          tab.title = data.title || 'Untitled page';
-          tab.summary = data.summary || 'No readable content found.';
+          tab.title = data.title || t('untitled');
+          tab.summary = data.summary || t('no_content');
           tab.links = data.links || [];
           tab.html = data.html || '<html><body><p>Page content unavailable.</p></body></html>';
 
@@ -892,13 +866,13 @@ string build_home_page() {
             tab.securityStatus = 'ok';
           }
 
-          renderTabDisplay();
+          renderPageContent();
         })
         .catch(err => {
           tab.securityStatus = 'bad';
-          statusEl.textContent = 'Request failed';
+          statusEl.textContent = t('request_failed');
           statusEl.className = 'status bad';
-          summaryEl.textContent = 'Could not load page. Please check the URL and try again.';
+          summaryEl.textContent = t('no_content');
           console.error(err);
         });
     }
@@ -907,43 +881,35 @@ string build_home_page() {
       const tab = getActiveTab();
       if (!tab || tab.historyIndex <= 0) return;
       tab.historyIndex -= 1;
-      const prevUrl = tab.history[tab.historyIndex];
-      tab.url = prevUrl;
-      navigateTo(prevUrl, { pushToHistory: false });
+      navigateTo(tab.history[tab.historyIndex], false);
     }
 
     function goForward() {
       const tab = getActiveTab();
       if (!tab || tab.historyIndex >= tab.history.length - 1) return;
       tab.historyIndex += 1;
-      const nextUrl = tab.history[tab.historyIndex];
-      tab.url = nextUrl;
-      navigateTo(nextUrl, { pushToHistory: false });
+      navigateTo(tab.history[tab.historyIndex], false);
     }
 
     document.getElementById('fetchButton').addEventListener('click', () => {
       const url = document.getElementById('urlInput').value.trim();
       if (!url) return;
-      navigateTo(url, { pushToHistory: true });
+      navigateTo(url, true);
     });
 
     document.getElementById('urlInput').addEventListener('keydown', (event) => {
       if (event.key === 'Enter') {
         const url = document.getElementById('urlInput').value.trim();
         if (!url) return;
-        navigateTo(url, { pushToHistory: true });
+        navigateTo(url, true);
       }
     });
 
     document.getElementById('backBtn').addEventListener('click', goBack);
     document.getElementById('forwardBtn').addEventListener('click', goForward);
-    document.getElementById('newTabButton').addEventListener('click', () => {
-      const nextTab = createTab('https://example.com');
-      navigateTo(nextTab.url, { pushToHistory: true });
-    });
 
-    renderTabDisplay();
-    navigateTo('https://example.com', { pushToHistory: true });
+    renderPageContent();
+    updateUI();
   </script>
 </body>
 </html>
@@ -974,7 +940,7 @@ void handle_client(int client_socket) {
             string real_url = url_decode(encoded_url);
 
             if (!is_valid_url(real_url)) {
-                string json = "{\"title\":\"Blocked URL\",\"summary\":\"This URL was blocked by the browser security policy.\",\"html\":\"\",\"links\":[ ]}";
+                string json = "{\"title\":\"" + t("error_url_blocked") + "\",\"summary\":\"" + t("error_url_blocked") + "\",\"html\":\"\",\"links\":[ ]}";
                 response = "HTTP/1.1 200 OK\r\nContent-Type: application/json; charset=utf-8\r\nConnection: close\r\n\r\n" + json;
             } else {
                 string html = fetch_url(real_url);
@@ -982,28 +948,6 @@ void handle_client(int client_socket) {
                 response = "HTTP/1.1 200 OK\r\nContent-Type: application/json; charset=utf-8\r\nConnection: close\r\n\r\n" + json;
             }
         }
-    } else if (request.find("GET /history/back") == 0) {
-        lock_guard<mutex> lock(g_history_mutex);
-        string url = g_history.go_back();
-        if (url.empty()) {
-            response = "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nConnection: close\r\n\r\n{\"url\": \"\"}";
-        } else {
-            response = "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nConnection: close\r\n\r\n{\"url\": \"" + escape_json(url) + "\"}";
-        }
-    } else if (request.find("GET /history/forward") == 0) {
-        lock_guard<mutex> lock(g_history_mutex);
-        string url = g_history.go_forward();
-        if (url.empty()) {
-            response = "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nConnection: close\r\n\r\n{\"url\": \"\"}";
-        } else {
-            response = "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nConnection: close\r\n\r\n{\"url\": \"" + escape_json(url) + "\"}";
-        }
-    } else if (request.find("GET /history/status") == 0) {
-        lock_guard<mutex> lock(g_history_mutex);
-        bool can_back = g_history.can_go_back();
-        bool can_forward = g_history.can_go_forward();
-        string json = "{\"canGoBack\": " + string(can_back ? "true" : "false") + ", \"canGoForward\": " + string(can_forward ? "true" : "false") + "}";
-        response = "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nConnection: close\r\n\r\n" + json;
     } else {
         response = "HTTP/1.1 404 Not Found\r\nConnection: close\r\n\r\n404 Not Found";
     }
@@ -1039,8 +983,14 @@ int main() {
         return 1;
     }
 
-    cout << "Simple C++ Browser is running on http://localhost:8080" << endl;
+    cout << "========================================" << endl;
+    cout << "  Simple C++ Browser v2.0" << endl;
+    cout << "  Multi-language Support (EN, ES, FR)" << endl;
+    cout << "========================================" << endl;
+    cout << "Server running on http://localhost:8080" << endl;
     cout << "Build with: g++ -std=c++17 -pthread -lssl -lcrypto main.cpp -o browser" << endl;
+    cout << "Press Ctrl+C to stop" << endl;
+    cout << "========================================" << endl;
 
     while (true) {
         sockaddr_in client_addr{};
