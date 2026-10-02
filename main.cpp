@@ -13,6 +13,8 @@
 #include <netdb.h>
 #include <unistd.h>
 #include <arpa/inet.h>
+#include <openssl/ssl.h>
+#include <openssl/err.h>
 
 using namespace std;
 
@@ -145,9 +147,15 @@ string build_json_response(const string& html) {
         text = text.substr(0, 500) + "...";
     }
 
+    string limited_html = html;
+    if (limited_html.size() > 250000) {
+        limited_html = limited_html.substr(0, 250000);
+    }
+
     string json = "{\n";
     json += "  \"title\": \"" + escape_json(title) + "\",\n";
     json += "  \"summary\": \"" + escape_json(text) + "\",\n";
+    json += "  \"html\": \"" + escape_json(limited_html) + "\",\n";
     json += "  \"links\": [\n";
     for (size_t i = 0; i < links.size() && i < 10; ++i) {
         if (i > 0) json += ",\n";
@@ -173,10 +181,6 @@ UrlParts parse_url(const string& input_url) {
         parts.protocol = "https";
         parts.port = 443;
         url = url.substr(8);
-    } else {
-        url = url;
-        parts.protocol = "http";
-        parts.port = 80;
     }
 
     size_t slash_pos = url.find('/');
@@ -229,25 +233,75 @@ string fetch_url(const string& input_url) {
         return "<error>Connection failed</error>";
     }
 
-    freeaddrinfo(res);
-
     string request =
         "GET " + parts.path + " HTTP/1.1\r\n" +
         "Host: " + parts.host + "\r\n" +
-        "User-Agent: SimpleCppBrowser/1.2\r\n" +
+        "User-Agent: SimpleCppBrowser/1.3\r\n" +
+        "Accept: text/html,application/xhtml+xml,*/*\r\n" +
         "Connection: close\r\n\r\n";
 
-    send(sock, request.c_str(), request.size(), 0);
-
     string response;
-    char buffer[4096];
-    while (true) {
-        ssize_t bytes = recv(sock, buffer, sizeof(buffer), 0);
-        if (bytes <= 0) break;
-        response.append(buffer, bytes);
-    }
 
-    close(sock);
+    if (parts.protocol == "https") {
+        SSL_library_init();
+        SSL_load_error_strings();
+
+        SSL_CTX* ctx = SSL_CTX_new(TLS_client_method());
+        if (!ctx) {
+            close(sock);
+            freeaddrinfo(res);
+            return "<error>Failed to create SSL context</error>";
+        }
+
+        SSL* ssl = SSL_new(ctx);
+        if (!ssl) {
+            SSL_CTX_free(ctx);
+            close(sock);
+            freeaddrinfo(res);
+            return "<error>Failed to create SSL object</error>";
+        }
+
+        SSL_set_fd(ssl, sock);
+        if (SSL_connect(ssl) <= 0) {
+            SSL_free(ssl);
+            SSL_CTX_free(ctx);
+            close(sock);
+            freeaddrinfo(res);
+            return "<error>SSL connection failed</error>";
+        }
+
+        if (SSL_write(ssl, request.c_str(), static_cast<int>(request.size())) <= 0) {
+            SSL_shutdown(ssl);
+            SSL_free(ssl);
+            SSL_CTX_free(ctx);
+            close(sock);
+            freeaddrinfo(res);
+            return "<error>SSL request failed</error>";
+        }
+
+        char buffer[4096];
+        while (true) {
+            int bytes = SSL_read(ssl, buffer, sizeof(buffer));
+            if (bytes <= 0) break;
+            response.append(buffer, bytes);
+        }
+
+        SSL_shutdown(ssl);
+        SSL_free(ssl);
+        SSL_CTX_free(ctx);
+        close(sock);
+        freeaddrinfo(res);
+    } else {
+        send(sock, request.c_str(), request.size(), 0);
+        char buffer[4096];
+        while (true) {
+            ssize_t bytes = recv(sock, buffer, sizeof(buffer), 0);
+            if (bytes <= 0) break;
+            response.append(buffer, bytes);
+        }
+        close(sock);
+        freeaddrinfo(res);
+    }
 
     size_t body_start = response.find("\r\n\r\n");
     if (body_start == string::npos) {
@@ -323,8 +377,9 @@ string build_home_page() {
       --muted: #d1d5db;
       --border: #374151;
       --success: #a7f3d0;
-      --warning: #fbbf24;
     }
+
+    * { box-sizing: border-box; }
 
     body {
       margin: 0;
@@ -334,7 +389,7 @@ string build_home_page() {
     }
 
     .container {
-      max-width: 1200px;
+      max-width: 1400px;
       margin: 24px auto;
       padding: 16px;
     }
@@ -424,10 +479,7 @@ string build_home_page() {
       font-size: 0.95rem;
     }
 
-    button:hover {
-      background: #2563eb;
-    }
-
+    button:hover { background: #2563eb; }
     button:disabled {
       background: #6b7280;
       cursor: not-allowed;
@@ -445,20 +497,27 @@ string build_home_page() {
       font-size: 1rem;
     }
 
-    .content {
+    .main-view {
+      display: grid;
+      grid-template-columns: 420px 1fr;
+      gap: 16px;
       padding: 18px;
-      min-height: 600px;
+      min-height: 650px;
       background: var(--card);
+    }
+
+    .panel {
+      background: rgba(255,255,255,0.02);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      padding: 14px;
+      min-height: 290px;
     }
 
     .status {
       color: var(--success);
       font-weight: bold;
       margin-bottom: 14px;
-    }
-
-    .meta {
-      margin-bottom: 16px;
     }
 
     .meta h2 {
@@ -474,7 +533,7 @@ string build_home_page() {
       white-space: pre-wrap;
       line-height: 1.6;
       margin-bottom: 18px;
-      min-height: 80px;
+      min-height: 120px;
     }
 
     .links {
@@ -492,6 +551,29 @@ string build_home_page() {
       color: var(--accent-2);
       text-decoration: none;
     }
+
+    .render-panel {
+      position: relative;
+      overflow: hidden;
+      background: #f3f4f6;
+      border-radius: 10px;
+      border: 1px solid var(--border);
+      min-height: 560px;
+    }
+
+    #pageFrame {
+      width: 100%;
+      height: 100%;
+      min-height: 560px;
+      border: none;
+      background: white;
+    }
+
+    @media (max-width: 1000px) {
+      .main-view {
+        grid-template-columns: 1fr;
+      }
+    }
   </style>
 </head>
 <body>
@@ -503,18 +585,25 @@ string build_home_page() {
           <button id="backBtn" type="button">← Back</button>
           <button id="forwardBtn" type="button">Forward →</button>
         </div>
-        <input id="urlInput" type="text" value="http://example.com" placeholder="Enter an address" />
+        <input id="urlInput" type="text" value="https://example.com" placeholder="Enter an address" />
         <button id="fetchButton" type="button">Browse</button>
         <button id="newTabButton" class="new-tab-btn" type="button">+ New Tab</button>
       </div>
-      <div class="content">
-        <div id="status" class="status">Ready</div>
-        <div class="meta">
-          <h2 id="pageTitle">Page title</h2>
+
+      <div class="main-view">
+        <div class="panel">
+          <div id="status" class="status">Ready</div>
+          <div class="meta">
+            <h2 id="pageTitle">Page title</h2>
+          </div>
+          <div id="summary" class="summary">Loading page...</div>
+          <h3>Links</h3>
+          <ul id="links" class="links"></ul>
         </div>
-        <div id="summary" class="summary">Loading page...</div>
-        <h3>Links</h3>
-        <ul id="links" class="links"></ul>
+
+        <div class="render-panel">
+          <iframe id="pageFrame" title="Rendered page"></iframe>
+        </div>
       </div>
     </div>
   </div>
@@ -523,11 +612,12 @@ string build_home_page() {
     let tabs = [{
       id: 1,
       title: 'Page title',
-      url: 'http://example.com',
-      history: ['http://example.com'],
+      url: 'https://example.com',
+      history: ['https://example.com'],
       historyIndex: 0,
       summary: 'Loading page...',
-      links: []
+      links: [],
+      html: '<html><body><p>Loading...</p></body></html>'
     }];
 
     let activeTabId = 1;
@@ -535,14 +625,6 @@ string build_home_page() {
 
     function getActiveTab() {
       return tabs.find(tab => tab.id === activeTabId) || tabs[0];
-    }
-
-    function saveTabState(tab, title, summary, links) {
-      tab.title = title || 'Untitled page';
-      tab.summary = summary || 'No readable content found.';
-      tab.links = Array.isArray(links) ? links : [];
-      renderTabDisplay();
-      renderPageContent();
     }
 
     function renderTabs() {
@@ -586,12 +668,13 @@ string build_home_page() {
       const titleEl = document.getElementById('pageTitle');
       const summaryEl = document.getElementById('summary');
       const linksEl = document.getElementById('links');
-      const statusEl = document.getElementById('status');
       const urlEl = document.getElementById('urlInput');
+      const frameEl = document.getElementById('pageFrame');
 
       titleEl.textContent = tab.title || 'Page title';
       summaryEl.textContent = tab.summary || 'No readable content found.';
       urlEl.value = tab.url || '';
+      frameEl.srcdoc = tab.html || '<html><body><p>Render preview unavailable.</p></body></html>';
 
       linksEl.innerHTML = '';
       if (Array.isArray(tab.links) && tab.links.length > 0) {
@@ -611,7 +694,6 @@ string build_home_page() {
         linksEl.appendChild(li);
       }
 
-      statusEl.textContent = 'Ready';
       updateNavButtons();
     }
 
@@ -636,7 +718,8 @@ string build_home_page() {
         history: [url],
         historyIndex: 0,
         summary: 'Loading page...',
-        links: []
+        links: [],
+        html: '<html><body><p>Loading...</p></body></html>'
       };
       tabs.push(newTab);
       activeTabId = newTab.id;
@@ -645,9 +728,7 @@ string build_home_page() {
     }
 
     function closeTab(id) {
-      if (tabs.length === 1) {
-        return;
-      }
+      if (tabs.length === 1) return;
       const index = tabs.findIndex(tab => tab.id === id);
       if (index === -1) return;
       tabs.splice(index, 1);
@@ -689,11 +770,13 @@ string build_home_page() {
       const summaryEl = document.getElementById('summary');
       const titleEl = document.getElementById('pageTitle');
       const linksEl = document.getElementById('links');
+      const frameEl = document.getElementById('pageFrame');
 
       statusEl.textContent = 'Loading...';
       summaryEl.textContent = 'Fetching page...';
       titleEl.textContent = 'Page title';
       linksEl.innerHTML = '';
+      frameEl.srcdoc = '<html><body><p>Loading page...</p></body></html>';
 
       fetch('/fetch?url=' + encodeURIComponent(url))
         .then(res => res.json())
@@ -701,10 +784,13 @@ string build_home_page() {
           if (pushToHistory) {
             pushHistory(url);
           }
+
           tab.title = data.title || 'Untitled page';
           tab.summary = data.summary || 'No readable content found.';
           tab.links = data.links || [];
+          tab.html = data.html || '<html><body><p>Page content unavailable.</p></body></html>';
           renderTabDisplay();
+          statusEl.textContent = 'Page loaded successfully';
         })
         .catch(err => {
           statusEl.textContent = 'Request failed';
@@ -748,12 +834,12 @@ string build_home_page() {
     document.getElementById('backBtn').addEventListener('click', goBack);
     document.getElementById('forwardBtn').addEventListener('click', goForward);
     document.getElementById('newTabButton').addEventListener('click', () => {
-      createTab('https://example.com');
-      navigateTo('https://example.com', { pushToHistory: true });
+      const nextTab = createTab('https://example.com');
+      navigateTo(nextTab.url, { pushToHistory: true });
     });
 
     renderTabDisplay();
-    navigateTo('http://example.com', { pushToHistory: true });
+    navigateTo('https://example.com', { pushToHistory: true });
   </script>
 </body>
 </html>
@@ -772,11 +858,7 @@ void handle_client(int client_socket) {
     string response;
 
     if (request.find("GET / HTTP/1.1") == 0 || request.find("GET / ") == 0) {
-        response =
-            "HTTP/1.1 200 OK\r\n"
-            "Content-Type: text/html; charset=utf-8\r\n"
-            "Connection: close\r\n\r\n" +
-            build_home_page();
+        response = "HTTP/1.1 200 OK\r\nContent-Type: text/html; charset=utf-8\r\nConnection: close\r\n\r\n" + build_home_page();
     } else if (request.find("GET /fetch?") == 0) {
         size_t url_start = request.find("url=");
         if (url_start == string::npos) {
@@ -794,11 +876,7 @@ void handle_client(int client_socket) {
                 g_history.push(real_url);
             }
 
-            response =
-                "HTTP/1.1 200 OK\r\n"
-                "Content-Type: application/json; charset=utf-8\r\n"
-                "Connection: close\r\n\r\n" +
-                json;
+            response = "HTTP/1.1 200 OK\r\nContent-Type: application/json; charset=utf-8\r\nConnection: close\r\n\r\n" + json;
         }
     } else if (request.find("GET /history/back") == 0) {
         lock_guard<mutex> lock(g_history_mutex);
@@ -821,11 +899,7 @@ void handle_client(int client_socket) {
         bool can_back = g_history.can_go_back();
         bool can_forward = g_history.can_go_forward();
         string json = "{\"canGoBack\": " + string(can_back ? "true" : "false") + ", \"canGoForward\": " + string(can_forward ? "true" : "false") + "}";
-        response =
-            "HTTP/1.1 200 OK\r\n"
-            "Content-Type: application/json\r\n"
-            "Connection: close\r\n\r\n" +
-            json;
+        response = "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nConnection: close\r\n\r\n" + json;
     } else {
         response = "HTTP/1.1 404 Not Found\r\nConnection: close\r\n\r\n404 Not Found";
     }
@@ -862,6 +936,7 @@ int main() {
     }
 
     cout << "Simple C++ Browser is running on http://localhost:8080" << endl;
+    cout << "Build with: g++ -std=c++17 -pthread -lssl -lcrypto main.cpp -o browser" << endl;
 
     while (true) {
         sockaddr_in client_addr{};
