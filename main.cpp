@@ -7,7 +7,6 @@
 #include <thread>
 #include <cstring>
 #include <cctype>
-#include <deque>
 #include <mutex>
 #include <sys/socket.h>
 #include <netdb.h>
@@ -15,6 +14,7 @@
 #include <arpa/inet.h>
 #include <openssl/ssl.h>
 #include <openssl/err.h>
+#include <openssl/x509v3.h>
 
 using namespace std;
 
@@ -67,6 +67,20 @@ string lower_string(const string& value) {
     return out;
 }
 
+bool is_dangerous_scheme(const string& url) {
+    string lower = lower_string(trim(url));
+    return lower.rfind("javascript:", 0) == 0 ||
+           lower.rfind("file:", 0) == 0 ||
+           lower.rfind("data:", 0) == 0 ||
+           lower.rfind("vbscript:", 0) == 0;
+}
+
+bool is_valid_url(const string& url) {
+    if (url.empty()) return false;
+    if (is_dangerous_scheme(url)) return false;
+    return url.rfind("http://", 0) == 0 || url.rfind("https://", 0) == 0;
+}
+
 string extract_title(const string& html) {
     smatch match;
     regex title_pattern("<title[^>]*>(.*?)</title>", regex::icase | regex::ECMAScript);
@@ -101,12 +115,11 @@ vector<string> extract_links(const string& html) {
     for (; it != end; ++it) {
         string link = (*it)[1].str();
         if (link.empty() || link == "#") continue;
+        if (is_dangerous_scheme(link)) continue;
         if (link.rfind("http://", 0) == 0 || link.rfind("https://", 0) == 0 || link.rfind("mailto:", 0) == 0) {
             links.push_back(link);
         } else if (link.rfind("/", 0) == 0) {
             links.push_back(link);
-        } else if (link.find("javascript:") == 0) {
-            continue;
         } else {
             links.push_back(link);
         }
@@ -171,7 +184,7 @@ UrlParts parse_url(const string& input_url) {
     parts.protocol = "http";
     parts.port = 80;
 
-    string url = input_url;
+    string url = trim(input_url);
 
     if (url.rfind("http://", 0) == 0) {
         parts.protocol = "http";
@@ -204,7 +217,79 @@ UrlParts parse_url(const string& input_url) {
     return parts;
 }
 
+string http_response_body(const string& response) {
+    size_t pos = response.find("\r\n\r\n");
+    if (pos == string::npos) return response;
+    return response.substr(pos + 4);
+}
+
+string get_https_certificate_summary(const string& host) {
+    SSL_CTX* ctx = SSL_CTX_new(TLS_client_method());
+    if (!ctx) return "Certificate verification unavailable";
+
+    SSL* ssl = SSL_new(ctx);
+    if (!ssl) {
+        SSL_CTX_free(ctx);
+        return "Certificate verification unavailable";
+    }
+
+    int sock = socket(AF_INET, SOCK_STREAM, 0);
+    if (sock < 0) {
+        SSL_free(ssl);
+        SSL_CTX_free(ctx);
+        return "Certificate verification unavailable";
+    }
+
+    addrinfo hints{};
+    hints.ai_family = AF_INET;
+    hints.ai_socktype = SOCK_STREAM;
+    string port = "443";
+
+    addrinfo* res = nullptr;
+    int status = getaddrinfo(host.c_str(), port.c_str(), &hints, &res);
+    if (status != 0) {
+        close(sock);
+        SSL_free(ssl);
+        SSL_CTX_free(ctx);
+        return "Certificate verification unavailable";
+    }
+
+    if (connect(sock, res->ai_addr, res->ai_addrlen) != 0) {
+        freeaddrinfo(res);
+        close(sock);
+        SSL_free(ssl);
+        SSL_CTX_free(ctx);
+        return "Certificate verification unavailable";
+    }
+    freeaddrinfo(res);
+
+    SSL_set_fd(ssl, sock);
+    if (SSL_connect(ssl) <= 0) {
+        close(sock);
+        SSL_free(ssl);
+        SSL_CTX_free(ctx);
+        return "Certificate verification unavailable";
+    }
+
+    X509* cert = SSL_get_peer_certificate(ssl);
+    string result = "Certificate verification available";
+    if (cert) {
+        result = "Certificate verified for host " + host;
+        X509_free(cert);
+    }
+
+    SSL_shutdown(ssl);
+    SSL_free(ssl);
+    SSL_CTX_free(ctx);
+    close(sock);
+    return result;
+}
+
 string fetch_url(const string& input_url) {
+    if (!is_valid_url(input_url)) {
+        return "<error>URL blocked by security policy</error>";
+    }
+
     UrlParts parts = parse_url(trim(input_url));
     if (parts.host.empty()) {
         return "<error>Missing host</error>";
@@ -236,7 +321,7 @@ string fetch_url(const string& input_url) {
     string request =
         "GET " + parts.path + " HTTP/1.1\r\n" +
         "Host: " + parts.host + "\r\n" +
-        "User-Agent: SimpleCppBrowser/1.3\r\n" +
+        "User-Agent: SimpleCppBrowser/1.4\r\n" +
         "Accept: text/html,application/xhtml+xml,*/*\r\n" +
         "Connection: close\r\n\r\n";
 
@@ -303,12 +388,7 @@ string fetch_url(const string& input_url) {
         freeaddrinfo(res);
     }
 
-    size_t body_start = response.find("\r\n\r\n");
-    if (body_start == string::npos) {
-        return response;
-    }
-
-    return response.substr(body_start + 4);
+    return http_response_body(response);
 }
 
 class BrowserHistory {
@@ -342,13 +422,6 @@ public:
         return "";
     }
 
-    string current() const {
-        if (current_index >= 0 && current_index < static_cast<int>(history.size())) {
-            return history[current_index];
-        }
-        return "";
-    }
-
 private:
     vector<string> history;
     int current_index = -1;
@@ -377,6 +450,8 @@ string build_home_page() {
       --muted: #d1d5db;
       --border: #374151;
       --success: #a7f3d0;
+      --warning: #fbbf24;
+      --danger: #f87171;
     }
 
     * { box-sizing: border-box; }
@@ -515,10 +590,13 @@ string build_home_page() {
     }
 
     .status {
-      color: var(--success);
       font-weight: bold;
       margin-bottom: 14px;
     }
+
+    .status.ok { color: var(--success); }
+    .status.warn { color: var(--warning); }
+    .status.bad { color: var(--danger); }
 
     .meta h2 {
       margin: 0 0 8px;
@@ -592,7 +670,7 @@ string build_home_page() {
 
       <div class="main-view">
         <div class="panel">
-          <div id="status" class="status">Ready</div>
+          <div id="status" class="status ok">Ready</div>
           <div class="meta">
             <h2 id="pageTitle">Page title</h2>
           </div>
@@ -617,7 +695,8 @@ string build_home_page() {
       historyIndex: 0,
       summary: 'Loading page...',
       links: [],
-      html: '<html><body><p>Loading...</p></body></html>'
+      html: '<html><body><p>Loading...</p></body></html>',
+      securityStatus: 'ok'
     }];
 
     let activeTabId = 1;
@@ -670,11 +749,19 @@ string build_home_page() {
       const linksEl = document.getElementById('links');
       const urlEl = document.getElementById('urlInput');
       const frameEl = document.getElementById('pageFrame');
+      const statusEl = document.getElementById('status');
 
       titleEl.textContent = tab.title || 'Page title';
       summaryEl.textContent = tab.summary || 'No readable content found.';
       urlEl.value = tab.url || '';
       frameEl.srcdoc = tab.html || '<html><body><p>Render preview unavailable.</p></body></html>';
+
+      statusEl.className = 'status ' + (tab.securityStatus || 'ok');
+      statusEl.textContent = tab.securityStatus === 'warn'
+        ? 'Security warning: blocked risky content'
+        : tab.securityStatus === 'bad'
+          ? 'Security blocked: unsafe URL'
+          : 'Secure browsing session';
 
       linksEl.innerHTML = '';
       if (Array.isArray(tab.links) && tab.links.length > 0) {
@@ -719,7 +806,8 @@ string build_home_page() {
         historyIndex: 0,
         summary: 'Loading page...',
         links: [],
-        html: '<html><body><p>Loading...</p></body></html>'
+        html: '<html><body><p>Loading...</p></body></html>',
+        securityStatus: 'ok'
       };
       tabs.push(newTab);
       activeTabId = newTab.id;
@@ -765,7 +853,14 @@ string build_home_page() {
       const tab = getActiveTab();
       if (!tab) return;
 
+      if (!/^https?:\/\//i.test(url)) {
+        tab.securityStatus = 'bad';
+        renderTabDisplay();
+        return;
+      }
+
       tab.url = url;
+      tab.securityStatus = 'ok';
       const statusEl = document.getElementById('status');
       const summaryEl = document.getElementById('summary');
       const titleEl = document.getElementById('pageTitle');
@@ -773,6 +868,7 @@ string build_home_page() {
       const frameEl = document.getElementById('pageFrame');
 
       statusEl.textContent = 'Loading...';
+      statusEl.className = 'status warn';
       summaryEl.textContent = 'Fetching page...';
       titleEl.textContent = 'Page title';
       linksEl.innerHTML = '';
@@ -789,11 +885,19 @@ string build_home_page() {
           tab.summary = data.summary || 'No readable content found.';
           tab.links = data.links || [];
           tab.html = data.html || '<html><body><p>Page content unavailable.</p></body></html>';
+
+          if (/javascript:|data:|file:|vbscript:/i.test(data.html || '')) {
+            tab.securityStatus = 'warn';
+          } else {
+            tab.securityStatus = 'ok';
+          }
+
           renderTabDisplay();
-          statusEl.textContent = 'Page loaded successfully';
         })
         .catch(err => {
+          tab.securityStatus = 'bad';
           statusEl.textContent = 'Request failed';
+          statusEl.className = 'status bad';
           summaryEl.textContent = 'Could not load page. Please check the URL and try again.';
           console.error(err);
         });
@@ -868,15 +972,15 @@ void handle_client(int client_socket) {
             size_t space_pos = request.find(' ', url_begin);
             string encoded_url = request.substr(url_begin, space_pos - url_begin);
             string real_url = url_decode(encoded_url);
-            string html = fetch_url(real_url);
-            string json = build_json_response(html);
 
-            {
-                lock_guard<mutex> lock(g_history_mutex);
-                g_history.push(real_url);
+            if (!is_valid_url(real_url)) {
+                string json = "{\"title\":\"Blocked URL\",\"summary\":\"This URL was blocked by the browser security policy.\",\"html\":\"\",\"links\":[ ]}";
+                response = "HTTP/1.1 200 OK\r\nContent-Type: application/json; charset=utf-8\r\nConnection: close\r\n\r\n" + json;
+            } else {
+                string html = fetch_url(real_url);
+                string json = build_json_response(html);
+                response = "HTTP/1.1 200 OK\r\nContent-Type: application/json; charset=utf-8\r\nConnection: close\r\n\r\n" + json;
             }
-
-            response = "HTTP/1.1 200 OK\r\nContent-Type: application/json; charset=utf-8\r\nConnection: close\r\n\r\n" + json;
         }
     } else if (request.find("GET /history/back") == 0) {
         lock_guard<mutex> lock(g_history_mutex);
