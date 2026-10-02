@@ -1,0 +1,35 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>SimpleCppBrowser</title>
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+  <div class="browser-shell">
+    <div class="toolbar">
+      <button id="backBtn" type="button">Back</button>
+      <button id="forwardBtn" type="button">Forward</button>
+      <input id="urlInput" type="text" value="https://example.com" placeholder="Enter URL" />
+      <button id="goBtn" type="button">Go</button>
+    </div>
+
+    <div class="content">
+      <aside class="info-panel">
+        <div id="status" class="status ok">Ready</div>
+        <h2 id="pageTitle">Page title</h2>
+        <div id="summary" class="summary">Loading page...</div>
+        <h3>Links</h3>
+        <ul id="links" class="links"></ul>
+      </aside>
+
+      <main class="viewport-panel">
+        <iframe id="pageFrame" title="Browser preview" src="https://example.com"></iframe>
+      </main>
+    </div>
+  </div>
+
+  <script src="app.js"></script>
+</body>
+</html>
